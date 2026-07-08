@@ -9,7 +9,6 @@ RENDER_URL = "https://prorab-psee.onrender.com"
 
 WORKERS = ["Сергей", "Денис", "Иван", "Александр"]
 
-# --- База данных ---
 def init_db():
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
@@ -161,7 +160,8 @@ def main():
     app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 10000)),
-        webhook_url=f"{RENDER_URL}/webhook"
+        webhook_url=f"{RENDER_URL}/webhook",
+        secret_token="my_secret_2026"
     )
 
 if __name__ == "__main__":
