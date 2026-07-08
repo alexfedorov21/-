@@ -2,10 +2,13 @@ import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from flask import Flask
+from threading import Thread
 
 TOKEN = "8929241175:AAHX53utdWnRLhRJl5VtKBaZ5n5Taab2CGU"
 WORKERS = ["Сергей", "Денис", "Иван", "Александр"]
 
+# --- База данных ---
 def init_db():
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
@@ -52,6 +55,7 @@ def get_worker_today(worker_name):
     conn.close()
     return row
 
+# --- Клавиатуры ---
 def get_main_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Отметить сотрудника", callback_data="checkin")],
@@ -88,12 +92,50 @@ def build_today_text():
         return f"📅 *{today}*\n👥 На смене ({len(checkins)} чел, {total} ч):\n" + "\n".join(names)
     return f"📅 *{today}*\nПока никто не отметился."
 
+# --- Команды ---
 async def checkin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(build_today_text(), parse_mode="Markdown")
 
+async def month_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    now = datetime.now()
+    month, year = now.month, now.year
+    if args:
+        try:
+            month = int(args[0])
+            if len(args) > 1:
+                year = int(args[1])
+        except:
+            pass
+    month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+    start = f"{year}-{month:02d}-01"
+    if month == 12:
+        end = f"{year+1}-01-01"
+    else:
+        end = f"{year}-{month+1:02d}-01"
+    conn = sqlite3.connect("checkins.db")
+    c = conn.cursor()
+    c.execute("SELECT worker_name, date, hours FROM checkins WHERE date >= ? AND date < ? ORDER BY worker_name, date", (start, end))
+    rows = c.fetchall()
+    conn.close()
+    if rows:
+        workers = {}
+        for w, d, h in rows:
+            if w not in workers:
+                workers[w] = {"total": 0, "days": []}
+            workers[w]["total"] += float(h)
+            workers[w]["days"].append(f"{datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m')}: {h} ч")
+        text = f"📊 *{month_names[month]} {year}*\n\n"
+        for w, data in workers.items():
+            text += f"• *{w}*: {data['total']} ч\n   {', '.join(data['days'])}\n\n"
+    else:
+        text = f"📊 *{month_names[month]} {year}*\n\nНет данных."
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# --- Кнопки ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -145,13 +187,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting_hours"] = False
     await update.message.reply_text(f"✅ {worker_name}: {hours_str} ч")
 
+# --- Запуск ---
 def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("checkin", checkin_cmd))
     app.add_handler(CommandHandler("today", today_cmd))
+    app.add_handler(CommandHandler("month", month_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Flask-заглушка для Render
+    web = Flask(__name__)
+    @web.route('/')
+    def home():
+        return "OK"
+    Thread(target=lambda: web.run(host='0.0.0.0', port=10000)).start()
+
     print("Бот запущен...")
     app.run_polling()
 
