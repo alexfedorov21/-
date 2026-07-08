@@ -2,10 +2,10 @@ import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
-from flask import Flask
-from threading import Thread
+import os
 
 TOKEN = "8929241175:AAHX53utdWnRLhRJl5VtKBaZ5n5Taab2CGU"
+RENDER_URL = "https://prorab-psee.onrender.com"
 
 WORKERS = ["Сергей", "Денис", "Иван", "Александр"]
 
@@ -25,7 +25,7 @@ def add_checkin(user_id, telegram_username, worker_name, hours):
     today = datetime.now().strftime("%Y-%m-%d")
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO checkins (user_id, telegram_username, worker_name, date, hours) VALUES (?, ?, ?, ?, ?)",
+    c.execute("INSERT OR REPLACE INTO checkins VALUES (?, ?, ?, ?, ?)",
               (user_id, telegram_username, worker_name, today, hours))
     conn.commit()
     conn.close()
@@ -33,6 +33,7 @@ def add_checkin(user_id, telegram_username, worker_name, hours):
 def delete_worker_checkin(worker_name):
     today = datetime.now().strftime("%Y-%m-%d")
     conn = sqlite3.connect("checkins.db")
+    c = conn.cursor()
     c.execute("DELETE FROM checkins WHERE worker_name = ? AND date = ?", (worker_name, today))
     conn.commit()
     conn.close()
@@ -41,7 +42,7 @@ def get_today_list():
     today = datetime.now().strftime("%Y-%m-%d")
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
-    c.execute("SELECT worker_name, hours, user_id FROM checkins WHERE date = ? ORDER BY worker_name", (today,))
+    c.execute("SELECT worker_name, hours FROM checkins WHERE date = ? ORDER BY worker_name", (today,))
     rows = c.fetchall()
     conn.close()
     return rows
@@ -50,12 +51,11 @@ def get_worker_today(worker_name):
     today = datetime.now().strftime("%Y-%m-%d")
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
-    c.execute("SELECT hours, user_id FROM checkins WHERE worker_name = ? AND date = ?", (worker_name, today))
+    c.execute("SELECT hours FROM checkins WHERE worker_name = ? AND date = ?", (worker_name, today))
     row = c.fetchone()
     conn.close()
     return row
 
-# --- Клавиатуры ---
 def get_main_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Отметить сотрудника", callback_data="checkin")],
@@ -87,19 +87,17 @@ def build_today_text():
     today = datetime.now().strftime("%Y-%m-%d")
     checkins = get_today_list()
     if checkins:
-        names = [f"• {n} — {h} ч" for n, h, _ in checkins]
-        total = sum(float(h) for _, h, _ in checkins)
+        names = [f"• {n} — {h} ч" for n, h in checkins]
+        total = sum(float(h) for _, h in checkins)
         return f"📅 *{today}*\n👥 На смене ({len(checkins)} чел, {total} ч):\n" + "\n".join(names)
     return f"📅 *{today}*\nПока никто не отметился."
 
-# --- Команды ---
 async def checkin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(build_today_text(), parse_mode="Markdown")
 
-# --- Кнопки ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -125,8 +123,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith("hours_"):
         hours = query.data.split("_", 1)[1]
         worker_name = context.user_data.get("selected_worker")
-        if not worker_name:
-            return
+        if not worker_name: return
         if hours == "other":
             context.user_data["awaiting_hours"] = True
             await query.message.edit_text(f"👤 {worker_name}\n✏️ Напиши количество часов:")
@@ -139,8 +136,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("awaiting_hours"):
-        return
+    if not context.user_data.get("awaiting_hours"): return
     text = update.message.text.strip().replace(",", ".")
     worker_name = context.user_data.get("selected_worker")
     try:
@@ -161,15 +157,12 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Flask для порта
-    web = Flask(__name__)
-    @web.route('/')
-    def home():
-        return "OK"
-    Thread(target=lambda: web.run(host='0.0.0.0', port=10000)).start()
-
-    print("Бот запущен...")
-    app.run_polling()
+    print("Бот запущен через webhook...")
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        webhook_url=f"{RENDER_URL}/webhook"
+    )
 
 if __name__ == "__main__":
     main()
