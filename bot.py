@@ -9,7 +9,8 @@ from threading import Thread
 # --- ТОКЕН ---
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
- 
+    print("Ошибка: переменная TOKEN не задана!")
+    exit(1)
 # ------------
 
 # --- СПИСОК СОТРУДНИКОВ ---
