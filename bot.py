@@ -202,7 +202,7 @@ def main():
     @web.route('/')
     def home():
         return "OK"
-    Thread(target=lambda: web.run(host='0.0.0.0', port=10000)).start()
+       Thread(target=lambda: web.run(host='0.0.0.0', port=10000)).start()
 
     print("Бот запущен...")
     app.run_polling()
