@@ -7,11 +7,14 @@ from flask import Flask
 from threading import Thread
 
 # --- ТОКЕН ---
+# Берётся ТОЛЬКО из переменной окружения Render
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
-    print("Ошибка: переменная TOKEN не задана!")
+    print("ОШИБКА: Переменная окружения TOKEN не задана!")
+    print("Добавь TOKEN в Environment на Render")
     exit(1)
-# ------------
+
+print(f"Используется токен: {TOKEN[:10]}...")  # Покажет первые 10 символов для проверки
 
 # --- СПИСОК СОТРУДНИКОВ ---
 WORKERS = ["Сергей", "Денис", "Иван", "Александр"]
@@ -71,7 +74,6 @@ def get_worker_today(worker_name):
     conn.close()
     return row
 
-# --- Запросы для статистики ---
 def get_stats_by_period(start_date, end_date):
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
@@ -209,7 +211,6 @@ def get_hours_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# --- Формирование текста ---
 def build_today_text():
     today = datetime.now().strftime("%Y-%m-%d")
     checkins = get_today_list()
@@ -433,7 +434,6 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# --- Обработка Reply-кнопок (ТОЛЬКО в личке) ---
 async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return
@@ -454,7 +454,6 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     elif text == "📈 Отчёт":
         await report_command(update, context)
 
-# --- Обработка Inline-кнопок (работает везде) ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -466,7 +465,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_workers_keyboard("add"),
             parse_mode="Markdown"
         )
-
     elif query.data == "uncheckin":
         keyboard = get_workers_keyboard("remove")
         if keyboard is None:
@@ -477,7 +475,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
-
     elif query.data.startswith("remove_"):
         worker_name = query.data.split("_", 1)[1]
         existing = get_worker_today(worker_name)
@@ -487,7 +484,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.answer(f"⚠️ {worker_name} сегодня не отмечен.")
         await update_main_message(query)
-
     elif query.data.startswith("worker_"):
         worker_name = query.data.split("_", 1)[1]
         context.user_data["selected_worker"] = worker_name
@@ -505,7 +501,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=get_hours_keyboard(),
                 parse_mode="Markdown"
             )
-
     elif query.data.startswith("hours_"):
         hours = query.data.split("_", 1)[1]
         worker_name = context.user_data.get("selected_worker")
@@ -527,13 +522,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"✅ {worker_name}: {h} ч")
             await update_main_message(query)
             context.user_data.pop("selected_worker", None)
-
     elif query.data == "back_main":
         await update_main_message(query)
 
-# --- Обработка текста (своё количество часов) ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Пропускаем команды — их обрабатывают CommandHandler
     if update.message.text and update.message.text.startswith("/"):
         return
 
@@ -565,7 +557,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_text = build_today_text()
     await update.message.reply_text(today_text, parse_mode="Markdown")
 
-# --- Обновление главного сообщения ---
 async def update_main_message(query):
     text = build_today_text()
     try:
@@ -577,29 +568,20 @@ async def update_main_message(query):
     except:
         pass
 
-# --- Запуск ---
 def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
 
-    # CommandHandler — обрабатывает /команды
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("checkin", checkin_command))
     app.add_handler(CommandHandler("today", today_command))
     app.add_handler(CommandHandler("month", month_command))
     app.add_handler(CommandHandler("worker", worker_command))
     app.add_handler(CommandHandler("report", report_command))
-    
-    # Reply-кнопки только в личке
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex("^(📋 Сегодня|📊 Месяц|👤 Сотрудник|📈 Отчёт)$"), handle_reply_buttons))
-    
-    # Inline-кнопки (callback)
     app.add_handler(CallbackQueryHandler(button_handler))
-    
-    # Текстовые сообщения (только для ввода часов, команды пропускает)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Заглушка для Render
     web_app = Flask(__name__)
 
     @web_app.route('/')
