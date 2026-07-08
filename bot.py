@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from flask import Flask
@@ -8,7 +8,6 @@ from threading import Thread
 TOKEN = "8929241175:AAGhMNIdaGVj5dPWETPaPL5UEfRauU8InRI"
 WORKERS = ["Сергей", "Денис", "Иван", "Александр"]
 
-# --- База данных ---
 def init_db():
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
@@ -55,7 +54,6 @@ def get_worker_today(worker_name):
     conn.close()
     return row
 
-# --- Клавиатуры ---
 def get_main_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Отметить сотрудника", callback_data="checkin")],
@@ -72,8 +70,6 @@ def get_workers_keyboard(action="add"):
             keyboard.append([InlineKeyboardButton(f"❌ {worker}", callback_data=f"remove_{worker}")])
         elif not existing and action == "add":
             keyboard.append([InlineKeyboardButton(f"➕ {worker}", callback_data=f"worker_{worker}")])
-    if action == "remove" and not any(get_worker_today(w) for w in WORKERS):
-        return None
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -89,120 +85,76 @@ def build_today_text():
     if checkins:
         names = [f"• {n} — {h} ч" for n, h in checkins]
         total = sum(float(h) for _, h in checkins)
-        return f"📅 *{today}*\n👥 На смене ({len(checkins)} чел, {total} ч):\n" + "\n".join(names)
-    return f"📅 *{today}*\nПока никто не отметился."
+        return f"📅 *{today}*\n👥 ({len(checkins)} чел, {total} ч):\n" + "\n".join(names)
+    return f"📅 *{today}*\nНикого."
 
-# --- Команды ---
-async def checkin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
-async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(build_today_text(), parse_mode="Markdown")
 
-async def month_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    now = datetime.now()
-    month, year = now.month, now.year
-    if args:
-        try:
-            month = int(args[0])
-            if len(args) > 1:
-                year = int(args[1])
-        except:
-            pass
-    month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
-    start = f"{year}-{month:02d}-01"
-    if month == 12:
-        end = f"{year+1}-01-01"
-    else:
-        end = f"{year}-{month+1:02d}-01"
-    conn = sqlite3.connect("checkins.db")
-    c = conn.cursor()
-    c.execute("SELECT worker_name, date, hours FROM checkins WHERE date >= ? AND date < ? ORDER BY worker_name, date", (start, end))
-    rows = c.fetchall()
-    conn.close()
-    if rows:
-        workers = {}
-        for w, d, h in rows:
-            if w not in workers:
-                workers[w] = {"total": 0, "days": []}
-            workers[w]["total"] += float(h)
-            workers[w]["days"].append(f"{datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m')}: {h} ч")
-        text = f"📊 *{month_names[month]} {year}*\n\n"
-        for w, data in workers.items():
-            text += f"• *{w}*: {data['total']} ч\n   {', '.join(data['days'])}\n\n"
-    else:
-        text = f"📊 *{month_names[month]} {year}*\n\nНет данных."
-    await update.message.reply_text(text, parse_mode="Markdown")
+async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    u = q.from_user
+    d = q.data
 
-# --- Кнопки ---
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user = query.from_user
-
-    if query.data == "checkin":
-        await query.message.edit_text("👤 Выбери сотрудника:", reply_markup=get_workers_keyboard("add"))
-    elif query.data == "uncheckin":
+    if d == "checkin":
+        await q.message.edit_text("👤 Выбери:", reply_markup=get_workers_keyboard("add"))
+    elif d == "uncheckin":
         kb = get_workers_keyboard("remove")
-        if kb is None:
-            await query.answer("Нечего удалять.")
+        await q.message.edit_text("🗑 Выбери:", reply_markup=kb)
+    elif d.startswith("remove_"):
+        w = d.split("_", 1)[1]
+        delete_worker_checkin(w)
+        await q.answer(f"❌ {w}")
+        await q.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    elif d.startswith("worker_"):
+        w = d.split("_", 1)[1]
+        context.user_data["w"] = w
+        await q.message.edit_text(f"👤 {w}\nЧасы:", reply_markup=get_hours_keyboard())
+    elif d.startswith("hours_"):
+        h = d.split("_", 1)[1]
+        w = context.user_data.get("w")
+        if not w: return
+        if h == "other":
+            context.user_data["await"] = True
+            await q.message.edit_text(f"👤 {w}\n✏️ Часы:")
             return
-        await query.message.edit_text("Выбери для удаления:", reply_markup=kb)
-    elif query.data.startswith("remove_"):
-        worker_name = query.data.split("_", 1)[1]
-        delete_worker_checkin(worker_name)
-        await query.answer(f"❌ {worker_name} удалён.")
-        await query.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
-    elif query.data.startswith("worker_"):
-        worker_name = query.data.split("_", 1)[1]
-        context.user_data["selected_worker"] = worker_name
-        await query.message.edit_text(f"👤 {worker_name}\nВыбери часы:", reply_markup=get_hours_keyboard())
-    elif query.data.startswith("hours_"):
-        hours = query.data.split("_", 1)[1]
-        worker_name = context.user_data.get("selected_worker")
-        if not worker_name: return
-        if hours == "other":
-            context.user_data["awaiting_hours"] = True
-            await query.message.edit_text(f"👤 {worker_name}\n✏️ Напиши количество часов:")
-            return
-        add_checkin(user.id, user.username or "", worker_name, hours)
-        await query.answer(f"✅ {worker_name}: {hours} ч")
-        await query.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
-        context.user_data.pop("selected_worker", None)
-    elif query.data == "back_main":
-        await query.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
+        add_checkin(u.id, u.username or "", w, h)
+        await q.answer(f"✅ {w}: {h}ч")
+        await q.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    elif d == "back_main":
+        await q.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("awaiting_hours"): return
-    text = update.message.text.strip().replace(",", ".")
-    worker_name = context.user_data.get("selected_worker")
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("await"): return
+    t = update.message.text.strip().replace(",", ".")
+    w = context.user_data.get("w")
     try:
-        hours = float(text)
-        hours_str = str(int(hours)) if hours == int(hours) else str(hours)
+        h = float(t)
+        hs = str(int(h)) if h == int(h) else str(h)
     except:
-        await update.message.reply_text("❌ Введи число.")
+        await update.message.reply_text("❌ Число.")
         return
-    add_checkin(update.effective_user.id, update.effective_user.username or "", worker_name, hours_str)
-    context.user_data["awaiting_hours"] = False
-    await update.message.reply_text(f"✅ {worker_name}: {hours_str} ч")
+    add_checkin(update.effective_user.id, update.effective_user.username or "", w, hs)
+    context.user_data["await"] = False
+    await update.message.reply_text(f"✅ {w}: {hs}ч")
 
-# --- Запуск ---
 def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("checkin", checkin_cmd))
-    app.add_handler(CommandHandler("today", today_cmd))
-    app.add_handler(CommandHandler("month", month_cmd))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("checkin", cmd_checkin))
+    app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CallbackQueryHandler(on_button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
-    # Flask-заглушка для Render
     web = Flask(__name__)
     @web.route('/')
     def home():
         return "OK"
-       Thread(target=lambda: web.run(host='0.0.0.0', port=10000)).start()
+    Thread(target=lambda: web.run(host='0.0.0.0', port=10000)).start()
 
     print("Бот запущен...")
     app.run_polling()
