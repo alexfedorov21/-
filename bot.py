@@ -1,20 +1,11 @@
-import os
 import sqlite3
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
-from flask import Flask
-from threading import Thread
 
 # --- ТОКЕН ---
-# Берётся ТОЛЬКО из переменной окружения Render
-TOKEN = os.environ.get("TOKEN")
-if not TOKEN:
-    print("ОШИБКА: Переменная окружения TOKEN не задана!")
-    print("Добавь TOKEN в Environment на Render")
-    exit(1)
-
-print(f"Используется токен: {TOKEN[:10]}...")  # Покажет первые 10 символов для проверки
+TOKEN = "8929241175:AAHkqz6OMML6d4LfPuTdgspYAjRJabEL0rQ"
+# ------------
 
 # --- СПИСОК СОТРУДНИКОВ ---
 WORKERS = ["Сергей", "Денис", "Иван", "Александр"]
@@ -172,13 +163,6 @@ def get_main_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_reply_keyboard():
-    keyboard = [
-        [KeyboardButton("📋 Сегодня"), KeyboardButton("📊 Месяц")],
-        [KeyboardButton("👤 Сотрудник"), KeyboardButton("📈 Отчёт")],
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
 def get_workers_keyboard(action="add"):
     keyboard = []
     for worker in WORKERS:
@@ -228,22 +212,6 @@ def build_today_text():
     return text
 
 # --- Команды ---
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_type = update.message.chat.type
-
-    if chat_type == "private":
-        await update.message.reply_text(
-            "👋 Привет! Я бот для учёта смен.\n\n"
-            "Кнопки снизу — для быстрого доступа.\n"
-            "Команды также доступны через Меню.",
-            reply_markup=get_reply_keyboard()
-        )
-    else:
-        await update.message.reply_text(
-            "👋 Бот для учёта смен готов к работе!\n"
-            "Используйте /checkin для отметки."
-        )
-
 async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = build_today_text()
     await update.message.reply_text(
@@ -298,16 +266,13 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for worker_name, hours_sum, days_count in stats:
             total_hours += hours_sum
             total_days += days_count
-
             line = f"• *{worker_name}*: {hours_sum} ч ({days_count} смен)"
-
             if worker_name in worker_days:
                 day_details = []
                 for date, h in worker_days[worker_name]:
                     d = datetime.strptime(date, "%Y-%m-%d")
                     day_details.append(f"{d.strftime('%d.%m')}: {h} ч")
                 line += "\n   " + ", ".join(day_details)
-
             lines.append(line)
 
         text = f"📊 *{month_names[month]} {year}*\n\n" + "\n\n".join(lines)
@@ -321,31 +286,22 @@ async def worker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Укажи имя сотрудника. Пример: `/worker Иван`\n"
-            "Доступные имена: " + ", ".join(WORKERS),
+            "❌ Укажи имя сотрудника. Пример: `/worker Иван`\nДоступные: " + ", ".join(WORKERS),
             parse_mode="Markdown"
         )
         return
-
     worker_name = args[0]
     if worker_name not in WORKERS:
-        await update.message.reply_text(
-            f"❌ Сотрудник не найден. Доступные: {', '.join(WORKERS)}",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"❌ Сотрудник не найден. Доступные: {', '.join(WORKERS)}", parse_mode="Markdown")
         return
-
     now = datetime.now()
     month = now.month
     year = now.year
-
     if len(args) >= 2:
         try:
             month = int(args[1])
-            if month < 1 or month > 12:
-                raise ValueError
         except:
-            await update.message.reply_text("❌ Месяц должен быть числом от 1 до 12.")
+            await update.message.reply_text("❌ Месяц должен быть числом.")
             return
     if len(args) >= 3:
         try:
@@ -353,11 +309,9 @@ async def worker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("❌ Год должен быть числом.")
             return
-
     records = get_worker_monthly(worker_name, year, month)
     month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
                    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
-
     if records:
         total_hours = 0
         lines = []
@@ -366,18 +320,15 @@ async def worker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_hours += h
             d = datetime.strptime(date, "%Y-%m-%d")
             lines.append(f"• {d.strftime('%d.%m')}: {h} ч")
-        text = f"👤 *{worker_name}*\n📅 {month_names[month]} {year}\n\n"
-        text += "\n".join(lines)
+        text = f"👤 *{worker_name}*\n📅 {month_names[month]} {year}\n\n" + "\n".join(lines)
         text += f"\n\n✅ Всего: {total_hours} ч ({len(records)} смен)"
     else:
         text = f"👤 *{worker_name}*\n📅 {month_names[month]} {year}\n\nНет данных."
-
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     today = datetime.now()
-
     if len(args) == 0:
         end_date = today.strftime("%Y-%m-%d")
         start_date = (today - timedelta(days=6)).strftime("%Y-%m-%d")
@@ -387,7 +338,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             start_date = start.strftime("%Y-%m-%d")
             end_date = today.strftime("%Y-%m-%d")
         except:
-            await update.message.reply_text("❌ Неверный формат даты. Используй ДД.ММ (например, 01.07)")
+            await update.message.reply_text("❌ Неверный формат даты.")
             return
     elif len(args) == 2:
         try:
@@ -396,7 +347,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             start_date = start.strftime("%Y-%m-%d")
             end_date = end.strftime("%Y-%m-%d")
         except:
-            await update.message.reply_text("❌ Неверный формат даты. Используй ДД.ММ ДД.ММ (например, 01.07 08.07)")
+            await update.message.reply_text("❌ Неверный формат даты.")
             return
     else:
         await update.message.reply_text("❌ Слишком много аргументов.")
@@ -408,7 +359,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     e = datetime.strptime(end_date, "%Y-%m-%d").strftime("%d.%m")
 
     if not stats:
-        await update.message.reply_text(f"📊 *Отчёт {s}–{e}*\n\nНет данных за этот период.", parse_mode="Markdown")
+        await update.message.reply_text(f"📊 Отчёт {s}–{e}\n\nНет данных.", parse_mode="Markdown")
         return
 
     total_hours = 0
@@ -434,26 +385,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type != "private":
-        return
-
-    text = update.message.text
-
-    if text == "📋 Сегодня":
-        await today_command(update, context)
-    elif text == "📊 Месяц":
-        await month_command(update, context)
-    elif text == "👤 Сотрудник":
-        await update.message.reply_text(
-            "Выбери сотрудника командой: `/worker Имя`\n"
-            "Например: `/worker Иван`\n\n"
-            "Доступные: " + ", ".join(WORKERS),
-            parse_mode="Markdown"
-        )
-    elif text == "📈 Отчёт":
-        await report_command(update, context)
-
+# --- Обработка кнопок ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -468,13 +400,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "uncheckin":
         keyboard = get_workers_keyboard("remove")
         if keyboard is None:
-            await query.answer("Нечего удалять — никто не отмечен.")
+            await query.answer("Нечего удалять.")
             return
-        await query.message.edit_text(
-            "Выбери сотрудника для удаления:",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
+        await query.message.edit_text("Выбери сотрудника для удаления:", reply_markup=keyboard)
     elif query.data.startswith("remove_"):
         worker_name = query.data.split("_", 1)[1]
         existing = get_worker_today(worker_name)
@@ -488,7 +416,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         worker_name = query.data.split("_", 1)[1]
         context.user_data["selected_worker"] = worker_name
         existing = get_worker_today(worker_name)
-
         if existing:
             await query.message.edit_text(
                 f"👤 *{worker_name}*\nСейчас: {existing[0]} ч\nВыбери новые часы:",
@@ -504,11 +431,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith("hours_"):
         hours = query.data.split("_", 1)[1]
         worker_name = context.user_data.get("selected_worker")
-
         if not worker_name:
             await query.answer("⚠️ Сначала выбери сотрудника.")
             return
-
         if hours == "other":
             context.user_data["awaiting_hours"] = True
             await query.message.edit_text(
@@ -518,81 +443,55 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         else:
             add_checkin(user.id, user.username or "", worker_name, hours)
-            h = int(hours)
-            await query.answer(f"✅ {worker_name}: {h} ч")
+            await query.answer(f"✅ {worker_name}: {int(hours)} ч")
             await update_main_message(query)
             context.user_data.pop("selected_worker", None)
     elif query.data == "back_main":
         await update_main_message(query)
 
+# --- Обработка текста (свои часы) ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text and update.message.text.startswith("/"):
         return
-
     if not context.user_data.get("awaiting_hours"):
         return
-
     user = update.effective_user
     worker_name = context.user_data.get("selected_worker")
     text = update.message.text.strip().replace(",", ".")
-
     if not worker_name:
-        await update.message.reply_text("⚠️ Сначала выбери сотрудника через кнопки.")
+        await update.message.reply_text("⚠️ Сначала выбери сотрудника.")
         context.user_data["awaiting_hours"] = False
         return
-
     try:
         hours = float(text)
         if hours <= 0 or hours > 24:
             raise ValueError
         hours_str = str(int(hours)) if hours == int(hours) else str(hours)
     except:
-        await update.message.reply_text("❌ Введи число от 0 до 24 (например, 5 или 7.5):")
+        await update.message.reply_text("❌ Введи число от 0 до 24.")
         return
-
     add_checkin(user.id, user.username or "", worker_name, hours_str)
     context.user_data["awaiting_hours"] = False
     context.user_data.pop("selected_worker", None)
     await update.message.reply_text(f"✅ {worker_name}: {hours_str} ч")
-    today_text = build_today_text()
-    await update.message.reply_text(today_text, parse_mode="Markdown")
 
 async def update_main_message(query):
     text = build_today_text()
     try:
-        await query.edit_message_text(
-            text,
-            reply_markup=get_main_keyboard(),
-            parse_mode="Markdown"
-        )
+        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
     except:
         pass
 
 def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("checkin", checkin_command))
     app.add_handler(CommandHandler("today", today_command))
     app.add_handler(CommandHandler("month", month_command))
     app.add_handler(CommandHandler("worker", worker_command))
     app.add_handler(CommandHandler("report", report_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex("^(📋 Сегодня|📊 Месяц|👤 Сотрудник|📈 Отчёт)$"), handle_reply_buttons))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    web_app = Flask(__name__)
-
-    @web_app.route('/')
-    def home():
-        return "Бот работает"
-
-    def run_web():
-        web_app.run(host='0.0.0.0', port=10000)
-
-    Thread(target=run_web).start()
-
     print("Бот запущен...")
     app.run_polling()
 
