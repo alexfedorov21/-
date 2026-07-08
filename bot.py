@@ -2,11 +2,8 @@ import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
-import os
 
 TOKEN = "8929241175:AAHX53utdWnRLhRJl5VtKBaZ5n5Taab2CGU"
-RENDER_URL = "https://prorab-psee.onrender.com"
-
 WORKERS = ["Сергей", "Денис", "Иван", "Александр"]
 
 def init_db():
@@ -155,14 +152,8 @@ def main():
     app.add_handler(CommandHandler("today", today_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    print("Бот запущен через webhook...")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000)),
-        webhook_url=f"{RENDER_URL}/webhook",
-        secret_token="my_secret_2026"
-    )
+    print("Бот запущен...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
