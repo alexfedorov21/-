@@ -75,8 +75,12 @@ def get_workers_keyboard(action="add"):
 
 def get_hours_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("4 ч", callback_data="hours_4"), InlineKeyboardButton("6 ч", callback_data="hours_6"), InlineKeyboardButton("8 ч", callback_data="hours_8")],
-        [InlineKeyboardButton("10 ч", callback_data="hours_10"), InlineKeyboardButton("12 ч", callback_data="hours_12"), InlineKeyboardButton("✏️ Своё", callback_data="hours_other")],
+        [InlineKeyboardButton("4 ч", callback_data="hours_4"),
+         InlineKeyboardButton("6 ч", callback_data="hours_6"),
+         InlineKeyboardButton("8 ч", callback_data="hours_8")],
+        [InlineKeyboardButton("10 ч", callback_data="hours_10"),
+         InlineKeyboardButton("12 ч", callback_data="hours_12"),
+         InlineKeyboardButton("✏️ Своё", callback_data="hours_other")],
     ])
 
 def build_today_text():
@@ -101,46 +105,61 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     d = q.data
 
     if d == "checkin":
-        await q.message.edit_text("👤 Выбери:", reply_markup=get_workers_keyboard("add"))
+        await q.message.edit_text("👤 Выбери сотрудника:", reply_markup=get_workers_keyboard("add"))
     elif d == "uncheckin":
         kb = get_workers_keyboard("remove")
-        await q.message.edit_text("🗑 Выбери:", reply_markup=kb)
+        if kb is None:
+            await q.answer("Нечего удалять.")
+            return
+        await q.message.edit_text("🗑 Выбери для удаления:", reply_markup=kb)
     elif d.startswith("remove_"):
         w = d.split("_", 1)[1]
         delete_worker_checkin(w)
-        await q.answer(f"❌ {w}")
+        await q.answer(f"❌ {w} удалён")
         await q.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
     elif d.startswith("worker_"):
         w = d.split("_", 1)[1]
-        context.user_data["w"] = w
-        await q.message.edit_text(f"👤 {w}\nЧасы:", reply_markup=get_hours_keyboard())
+        context.user_data["selected_worker"] = w
+        existing = get_worker_today(w)
+        txt = f"👤 {w}\nСейчас: {existing[0]} ч\nНовые часы:" if existing else f"👤 {w}\nВыбери часы:"
+        await q.message.edit_text(txt, reply_markup=get_hours_keyboard())
     elif d.startswith("hours_"):
         h = d.split("_", 1)[1]
-        w = context.user_data.get("w")
-        if not w: return
+        w = context.user_data.get("selected_worker")
+        if not w:
+            return
         if h == "other":
-            context.user_data["await"] = True
-            await q.message.edit_text(f"👤 {w}\n✏️ Часы:")
+            context.user_data["awaiting_hours"] = True
+            context.user_data["selected_worker"] = w
+            await q.message.edit_text(f"👤 {w}\n✏️ Напиши свои часы числом (например, 5.5):")
             return
         add_checkin(u.id, u.username or "", w, h)
-        await q.answer(f"✅ {w}: {h}ч")
+        await q.answer(f"✅ {w}: {h} ч")
         await q.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
+        context.user_data.pop("selected_worker", None)
     elif d == "back_main":
         await q.message.edit_text(build_today_text(), reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("await"): return
+    if not context.user_data.get("awaiting_hours"):
+        return
     t = update.message.text.strip().replace(",", ".")
-    w = context.user_data.get("w")
+    w = context.user_data.get("selected_worker")
+    if not w:
+        return
     try:
-        h = float(t)
-        hs = str(int(h)) if h == int(h) else str(h)
+        hours = float(t)
+        if hours <= 0 or hours > 24:
+            raise ValueError
+        hs = str(int(hours)) if hours == int(hours) else str(hours)
     except:
-        await update.message.reply_text("❌ Число.")
+        await update.message.reply_text("❌ Введи число от 0.5 до 24.")
         return
     add_checkin(update.effective_user.id, update.effective_user.username or "", w, hs)
-    context.user_data["await"] = False
-    await update.message.reply_text(f"✅ {w}: {hs}ч")
+    context.user_data["awaiting_hours"] = False
+    context.user_data.pop("selected_worker", None)
+    await update.message.reply_text(f"✅ {w}: {hs} ч")
+    await update.message.reply_text(build_today_text(), parse_mode="Markdown")
 
 def main():
     init_db()
