@@ -163,7 +163,6 @@ def get_all_records_for_month(year, month):
 
 # --- Клавиатуры ---
 def get_main_keyboard():
-    """Inline-клавиатура (кнопки в сообщении) — работает везде"""
     keyboard = [
         [InlineKeyboardButton("✅ Отметить сотрудника", callback_data="checkin")],
         [InlineKeyboardButton("❌ Удалить отметку", callback_data="uncheckin")]
@@ -171,7 +170,6 @@ def get_main_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def get_reply_keyboard():
-    """Reply-клавиатура (кнопки над полем ввода) — только для лички"""
     keyboard = [
         [KeyboardButton("📋 Сегодня"), KeyboardButton("📊 Месяц")],
         [KeyboardButton("👤 Сотрудник"), KeyboardButton("📈 Отчёт")],
@@ -229,7 +227,6 @@ def build_today_text():
 
 # --- Команды ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/start — приветствие. Reply-клавиатура только в личке"""
     chat_type = update.message.chat.type
 
     if chat_type == "private":
@@ -437,7 +434,6 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Обработка Reply-кнопок (ТОЛЬКО в личке) ---
 async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Работает только в личных сообщениях, в группах игнорируется"""
     if update.message.chat.type != "private":
         return
 
@@ -536,6 +532,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Обработка текста (своё количество часов) ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Пропускаем команды — их обрабатывают CommandHandler
+    if update.message.text and update.message.text.startswith("/"):
+        return
+
     if not context.user_data.get("awaiting_hours"):
         return
 
@@ -561,8 +561,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting_hours"] = False
     context.user_data.pop("selected_worker", None)
     await update.message.reply_text(f"✅ {worker_name}: {hours_str} ч")
-    text = build_today_text()
-    await update.message.reply_text(text, parse_mode="Markdown")
+    today_text = build_today_text()
+    await update.message.reply_text(today_text, parse_mode="Markdown")
 
 # --- Обновление главного сообщения ---
 async def update_main_message(query):
@@ -581,15 +581,21 @@ def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
 
+    # CommandHandler — обрабатывает /команды
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("checkin", checkin_command))
     app.add_handler(CommandHandler("today", today_command))
     app.add_handler(CommandHandler("month", month_command))
     app.add_handler(CommandHandler("worker", worker_command))
     app.add_handler(CommandHandler("report", report_command))
+    
     # Reply-кнопки только в личке
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex("^(📋 Сегодня|📊 Месяц|👤 Сотрудник|📈 Отчёт)$"), handle_reply_buttons))
+    
+    # Inline-кнопки (callback)
     app.add_handler(CallbackQueryHandler(button_handler))
+    
+    # Текстовые сообщения (только для ввода часов, команды пропускает)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Заглушка для Render
