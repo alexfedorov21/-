@@ -4,7 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 # --- ТОКЕН ---
-TOKEN = "8929241175:AAHkqz6OMML6d4LfPuTdgspYAjRJabEL0rQ"
+TOKEN = "8929241175:AAGo_Vk5bfQNmoguKPN6YJdR41SrwBRnT8s"
 # ------------
 
 # --- СПИСОК СОТРУДНИКОВ ---
