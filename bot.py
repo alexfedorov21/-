@@ -163,7 +163,7 @@ def get_all_records_for_month(year, month):
 
 # --- Клавиатуры ---
 def get_main_keyboard():
-    """Inline-клавиатура (кнопки в сообщении)"""
+    """Inline-клавиатура (кнопки в сообщении) — работает везде"""
     keyboard = [
         [InlineKeyboardButton("✅ Отметить сотрудника", callback_data="checkin")],
         [InlineKeyboardButton("❌ Удалить отметку", callback_data="uncheckin")]
@@ -171,7 +171,7 @@ def get_main_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def get_reply_keyboard():
-    """Reply-клавиатура (кнопки над полем ввода)"""
+    """Reply-клавиатура (кнопки над полем ввода) — только для лички"""
     keyboard = [
         [KeyboardButton("📋 Сегодня"), KeyboardButton("📊 Месяц")],
         [KeyboardButton("👤 Сотрудник"), KeyboardButton("📈 Отчёт")],
@@ -229,17 +229,21 @@ def build_today_text():
 
 # --- Команды ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/start — показать приветствие и Reply-клавиатуру"""
-    await update.message.reply_text(
-        "👋 Привет! Я бот для учёта смен.\n\n"
-        "Используй кнопки ниже или команды:\n"
-        "/checkin — отметить сотрудников\n"
-        "/today — кто сегодня на смене\n"
-        "/month — статистика за месяц\n"
-        "/worker — статистика сотрудника\n"
-        "/report — отчёт за период",
-        reply_markup=get_reply_keyboard()
-    )
+    """/start — приветствие. Reply-клавиатура только в личке"""
+    chat_type = update.message.chat.type
+
+    if chat_type == "private":
+        await update.message.reply_text(
+            "👋 Привет! Я бот для учёта смен.\n\n"
+            "Кнопки снизу — для быстрого доступа.\n"
+            "Команды также доступны через Меню.",
+            reply_markup=get_reply_keyboard()
+        )
+    else:
+        await update.message.reply_text(
+            "👋 Бот для учёта смен готов к работе!\n"
+            "Используйте /checkin для отметки."
+        )
 
 async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = build_today_text()
@@ -254,11 +258,6 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /month — статистика за текущий месяц с детализацией по дням
-    /month 7 — за июль
-    /month 7 2026 — за июль 2026 года
-    """
     args = context.args
     now = datetime.now()
     month = now.month
@@ -320,11 +319,6 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def worker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /worker Иван — статистика сотрудника за текущий месяц
-    /worker Иван 7 — за июль
-    /worker Иван 7 2026 — за июль 2026 года
-    """
     args = context.args
     if not args:
         await update.message.reply_text(
@@ -382,11 +376,6 @@ async def worker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /report — отчёт за последние 7 дней
-    /report 01.07 — с даты по сегодня
-    /report 01.07 08.07 — за период
-    """
     args = context.args
     today = datetime.now()
 
@@ -446,9 +435,12 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# --- Обработка кнопок Reply-клавиатуры ---
+# --- Обработка Reply-кнопок (ТОЛЬКО в личке) ---
 async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает нажатия на Reply-кнопки (над клавиатурой)"""
+    """Работает только в личных сообщениях, в группах игнорируется"""
+    if update.message.chat.type != "private":
+        return
+
     text = update.message.text
 
     if text == "📋 Сегодня":
@@ -465,7 +457,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     elif text == "📈 Отчёт":
         await report_command(update, context)
 
-# --- Обработка Inline-кнопок ---
+# --- Обработка Inline-кнопок (работает везде) ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -595,6 +587,7 @@ def main():
     app.add_handler(CommandHandler("month", month_command))
     app.add_handler(CommandHandler("worker", worker_command))
     app.add_handler(CommandHandler("report", report_command))
+    # Reply-кнопки только в личке
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex("^(📋 Сегодня|📊 Месяц|👤 Сотрудник|📈 Отчёт)$"), handle_reply_buttons))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
