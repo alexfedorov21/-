@@ -9,7 +9,7 @@ from threading import Thread
 # --- ТОКЕН ---
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
-    TOKEN = "8929241175:AAHkqz6OMML6d4LfPuTdgspYAjRJabEL0rQ"
+    TOKEN = "8929241175:AAGo_Vk5bfQNmoguKPN6YJdR41SrwBRnT8s"
 # ------------
 
 # --- СПИСОК СОТРУДНИКОВ ---
