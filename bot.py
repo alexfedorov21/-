@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 from flask import Flask
 from threading import Thread
 
-TOKEN = "8929241175:AAGo_Vk5bfQNmoguKPN6YJdR41SrwBRnT8s"
+TOKEN = "8929241175:AAHX53utdWnRLhRJl5VtKBaZ5n5Taab2CGU"
 
 WORKERS = ["Сергей", "Денис", "Иван", "Александр"]
 
