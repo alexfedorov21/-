@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from flask import Flask
 from threading import Thread
@@ -101,11 +101,9 @@ def get_daily_report(start_date, end_date):
 def get_worker_monthly(worker_name, year, month):
     start = f"{year}-{month:02d}-01"
     if month == 12:
-        end = f"{year}-12-31"
         next_month_start = f"{year+1}-01-01"
     else:
-        end = f"{year}-{month+1:02d}-01"
-        next_month_start = end
+        next_month_start = f"{year}-{month+1:02d}-01"
 
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
@@ -127,11 +125,9 @@ def get_all_workers_stats(month=None, year=None):
 
     start = f"{year}-{month:02d}-01"
     if month == 12:
-        end = f"{year}-12-31"
         next_month_start = f"{year+1}-01-01"
     else:
-        end = f"{year}-{month+1:02d}-01"
-        next_month_start = end
+        next_month_start = f"{year}-{month+1:02d}-01"
 
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
@@ -167,11 +163,20 @@ def get_all_records_for_month(year, month):
 
 # --- Клавиатуры ---
 def get_main_keyboard():
+    """Inline-клавиатура (кнопки в сообщении)"""
     keyboard = [
         [InlineKeyboardButton("✅ Отметить сотрудника", callback_data="checkin")],
         [InlineKeyboardButton("❌ Удалить отметку", callback_data="uncheckin")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def get_reply_keyboard():
+    """Reply-клавиатура (кнопки над полем ввода)"""
+    keyboard = [
+        [KeyboardButton("📋 Сегодня"), KeyboardButton("📊 Месяц")],
+        [KeyboardButton("👤 Сотрудник"), KeyboardButton("📈 Отчёт")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_workers_keyboard(action="add"):
     keyboard = []
@@ -223,6 +228,19 @@ def build_today_text():
     return text
 
 # --- Команды ---
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/start — показать приветствие и Reply-клавиатуру"""
+    await update.message.reply_text(
+        "👋 Привет! Я бот для учёта смен.\n\n"
+        "Используй кнопки ниже или команды:\n"
+        "/checkin — отметить сотрудников\n"
+        "/today — кто сегодня на смене\n"
+        "/month — статистика за месяц\n"
+        "/worker — статистика сотрудника\n"
+        "/report — отчёт за период",
+        reply_markup=get_reply_keyboard()
+    )
+
 async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = build_today_text()
     await update.message.reply_text(
@@ -267,7 +285,6 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = get_all_workers_stats(month, year)
     all_records = get_all_records_for_month(year, month)
 
-    # Группируем по сотрудникам: {worker_name: [(date, hours), ...]}
     worker_days = {}
     for worker_name, date, hours in all_records:
         if worker_name not in worker_days:
@@ -429,13 +446,31 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# --- Обработка кнопок ---
+# --- Обработка кнопок Reply-клавиатуры ---
+async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатия на Reply-кнопки (над клавиатурой)"""
+    text = update.message.text
+
+    if text == "📋 Сегодня":
+        await today_command(update, context)
+    elif text == "📊 Месяц":
+        await month_command(update, context)
+    elif text == "👤 Сотрудник":
+        await update.message.reply_text(
+            "Выбери сотрудника командой: `/worker Имя`\n"
+            "Например: `/worker Иван`\n\n"
+            "Доступные: " + ", ".join(WORKERS),
+            parse_mode="Markdown"
+        )
+    elif text == "📈 Отчёт":
+        await report_command(update, context)
+
+# --- Обработка Inline-кнопок ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user = query.from_user
 
-    # ===== ДОБАВЛЕНИЕ СОТРУДНИКА =====
     if query.data == "checkin":
         await query.message.edit_text(
             "👤 Выбери сотрудника для отметки:",
@@ -443,7 +478,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    # ===== УДАЛЕНИЕ ОТМЕТКИ =====
     elif query.data == "uncheckin":
         keyboard = get_workers_keyboard("remove")
         if keyboard is None:
@@ -455,7 +489,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    # ===== УДАЛЕНИЕ КОНКРЕТНОГО СОТРУДНИКА =====
     elif query.data.startswith("remove_"):
         worker_name = query.data.split("_", 1)[1]
         existing = get_worker_today(worker_name)
@@ -466,7 +499,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"⚠️ {worker_name} сегодня не отмечен.")
         await update_main_message(query)
 
-    # ===== ВЫБОР СОТРУДНИКА ДЛЯ ОТМЕТКИ =====
     elif query.data.startswith("worker_"):
         worker_name = query.data.split("_", 1)[1]
         context.user_data["selected_worker"] = worker_name
@@ -485,7 +517,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-    # ===== ВЫБОР ЧАСОВ =====
     elif query.data.startswith("hours_"):
         hours = query.data.split("_", 1)[1]
         worker_name = context.user_data.get("selected_worker")
@@ -508,7 +539,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update_main_message(query)
             context.user_data.pop("selected_worker", None)
 
-    # ===== НАЗАД =====
     elif query.data == "back_main":
         await update_main_message(query)
 
@@ -559,11 +589,13 @@ def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
 
+    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("checkin", checkin_command))
     app.add_handler(CommandHandler("today", today_command))
     app.add_handler(CommandHandler("month", month_command))
     app.add_handler(CommandHandler("worker", worker_command))
     app.add_handler(CommandHandler("report", report_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex("^(📋 Сегодня|📊 Месяц|👤 Сотрудник|📈 Отчёт)$"), handle_reply_buttons))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
