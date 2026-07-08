@@ -2,6 +2,8 @@ import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from flask import Flask
+from threading import Thread
 
 # --- ТОКЕН ---
 TOKEN = "8929241175:AAGo_Vk5bfQNmoguKPN6YJdR41SrwBRnT8s"
@@ -98,12 +100,10 @@ def get_worker_monthly(worker_name, year, month):
         next_month_start = f"{year+1}-01-01"
     else:
         next_month_start = f"{year}-{month+1:02d}-01"
-
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
     c.execute("""
-        SELECT date, hours
-        FROM checkins
+        SELECT date, hours FROM checkins
         WHERE worker_name = ? AND date >= ? AND date < ?
         ORDER BY date
     """, (worker_name, start, next_month_start))
@@ -116,21 +116,17 @@ def get_all_workers_stats(month=None, year=None):
         month = datetime.now().month
     if year is None:
         year = datetime.now().year
-
     start = f"{year}-{month:02d}-01"
     if month == 12:
         next_month_start = f"{year+1}-01-01"
     else:
         next_month_start = f"{year}-{month+1:02d}-01"
-
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
     c.execute("""
         SELECT worker_name, SUM(CAST(hours AS REAL)), COUNT(DISTINCT date)
-        FROM checkins
-        WHERE date >= ? AND date < ?
-        GROUP BY worker_name
-        ORDER BY worker_name
+        FROM checkins WHERE date >= ? AND date < ?
+        GROUP BY worker_name ORDER BY worker_name
     """, (start, next_month_start))
     rows = c.fetchall()
     conn.close()
@@ -142,14 +138,11 @@ def get_all_records_for_month(year, month):
         next_month_start = f"{year+1}-01-01"
     else:
         next_month_start = f"{year}-{month+1:02d}-01"
-
     conn = sqlite3.connect("checkins.db")
     c = conn.cursor()
     c.execute("""
-        SELECT worker_name, date, hours
-        FROM checkins
-        WHERE date >= ? AND date < ?
-        ORDER BY worker_name, date
+        SELECT worker_name, date, hours FROM checkins
+        WHERE date >= ? AND date < ? ORDER BY worker_name, date
     """, (start, next_month_start))
     rows = c.fetchall()
     conn.close()
@@ -173,10 +166,8 @@ def get_workers_keyboard(action="add"):
             keyboard.append([InlineKeyboardButton(f"❌ {worker} ({existing[0]} ч) — удалить", callback_data=f"remove_{worker}")])
         elif not existing and action == "add":
             keyboard.append([InlineKeyboardButton(f"➕ {worker}", callback_data=f"worker_{worker}")])
-
     if action == "remove" and not any(get_worker_today(w) for w in WORKERS):
         return None
-
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -198,7 +189,6 @@ def get_hours_keyboard():
 def build_today_text():
     today = datetime.now().strftime("%Y-%m-%d")
     checkins = get_today_list()
-
     if checkins:
         total_hours = 0
         names = []
@@ -214,11 +204,7 @@ def build_today_text():
 # --- Команды ---
 async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = build_today_text()
-    await update.message.reply_text(
-        text,
-        reply_markup=get_main_keyboard(),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = build_today_text()
@@ -229,43 +215,32 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     month = now.month
     year = now.year
-
     if len(args) >= 1:
         try:
             month = int(args[0])
-            if month < 1 or month > 12:
-                raise ValueError
         except:
-            await update.message.reply_text("❌ Месяц должен быть числом от 1 до 12. Пример: `/month 7`", parse_mode="Markdown")
+            await update.message.reply_text("❌ Неверный месяц.")
             return
     if len(args) >= 2:
         try:
             year = int(args[1])
         except:
-            await update.message.reply_text("❌ Год должен быть числом. Пример: `/month 7 2026`", parse_mode="Markdown")
+            await update.message.reply_text("❌ Неверный год.")
             return
-
-    month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-                   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
-
+    month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
     stats = get_all_workers_stats(month, year)
     all_records = get_all_records_for_month(year, month)
-
     worker_days = {}
     for worker_name, date, hours in all_records:
         if worker_name not in worker_days:
             worker_days[worker_name] = []
         h = float(hours) if '.' in hours else int(hours)
         worker_days[worker_name].append((date, h))
-
     if stats:
         total_hours = 0
-        total_days = 0
         lines = []
-
         for worker_name, hours_sum, days_count in stats:
             total_hours += hours_sum
-            total_days += days_count
             line = f"• *{worker_name}*: {hours_sum} ч ({days_count} смен)"
             if worker_name in worker_days:
                 day_details = []
@@ -274,44 +249,26 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     day_details.append(f"{d.strftime('%d.%m')}: {h} ч")
                 line += "\n   " + ", ".join(day_details)
             lines.append(line)
-
         text = f"📊 *{month_names[month]} {year}*\n\n" + "\n\n".join(lines)
-        text += f"\n\n👥 *Всего: {total_hours} ч, {total_days} смен*"
+        text += f"\n\n👥 *Всего: {total_hours} ч*"
     else:
-        text = f"📊 *{month_names[month]} {year}*\n\nНет данных за этот месяц."
-
+        text = f"📊 *{month_names[month]} {year}*\n\nНет данных."
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def worker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args:
-        await update.message.reply_text(
-            "❌ Укажи имя сотрудника. Пример: `/worker Иван`\nДоступные: " + ", ".join(WORKERS),
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Укажи имя. Пример: `/worker Иван`", parse_mode="Markdown")
         return
     worker_name = args[0]
-    if worker_name not in WORKERS:
-        await update.message.reply_text(f"❌ Сотрудник не найден. Доступные: {', '.join(WORKERS)}", parse_mode="Markdown")
-        return
     now = datetime.now()
-    month = now.month
-    year = now.year
+    month, year = now.month, now.year
     if len(args) >= 2:
-        try:
-            month = int(args[1])
-        except:
-            await update.message.reply_text("❌ Месяц должен быть числом.")
-            return
+        month = int(args[1])
     if len(args) >= 3:
-        try:
-            year = int(args[2])
-        except:
-            await update.message.reply_text("❌ Год должен быть числом.")
-            return
+        year = int(args[2])
     records = get_worker_monthly(worker_name, year, month)
-    month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-                   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+    month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
     if records:
         total_hours = 0
         lines = []
@@ -333,70 +290,35 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         end_date = today.strftime("%Y-%m-%d")
         start_date = (today - timedelta(days=6)).strftime("%Y-%m-%d")
     elif len(args) == 1:
-        try:
-            start = datetime.strptime(args[0], "%d.%m").replace(year=today.year)
-            start_date = start.strftime("%Y-%m-%d")
-            end_date = today.strftime("%Y-%m-%d")
-        except:
-            await update.message.reply_text("❌ Неверный формат даты.")
-            return
+        start = datetime.strptime(args[0], "%d.%m").replace(year=today.year)
+        start_date = start.strftime("%Y-%m-%d")
+        end_date = today.strftime("%Y-%m-%d")
     elif len(args) == 2:
-        try:
-            start = datetime.strptime(args[0], "%d.%m").replace(year=today.year)
-            end = datetime.strptime(args[1], "%d.%m").replace(year=today.year)
-            start_date = start.strftime("%Y-%m-%d")
-            end_date = end.strftime("%Y-%m-%d")
-        except:
-            await update.message.reply_text("❌ Неверный формат даты.")
-            return
+        start = datetime.strptime(args[0], "%d.%m").replace(year=today.year)
+        end = datetime.strptime(args[1], "%d.%m").replace(year=today.year)
+        start_date = start.strftime("%Y-%m-%d")
+        end_date = end.strftime("%Y-%m-%d")
     else:
-        await update.message.reply_text("❌ Слишком много аргументов.")
         return
-
     stats = get_stats_by_period(start_date, end_date)
-    daily = get_daily_report(start_date, end_date)
-    s = datetime.strptime(start_date, "%Y-%m-%d").strftime("%d.%m")
-    e = datetime.strptime(end_date, "%Y-%m-%d").strftime("%d.%m")
-
     if not stats:
-        await update.message.reply_text(f"📊 Отчёт {s}–{e}\n\nНет данных.", parse_mode="Markdown")
+        await update.message.reply_text("Нет данных за этот период.")
         return
-
     total_hours = 0
-    worker_lines = []
-    for worker_name, hours, days in stats:
-        total_hours += hours
-        worker_lines.append(f"• {worker_name}: {hours} ч ({days} смен)")
-
-    text = f"📊 *Отчёт {s}–{e}*\n\n*По сотрудникам:*\n" + "\n".join(worker_lines)
-    text += f"\n\n👥 *Всего: {total_hours} ч*"
-
-    if len(daily) <= 30:
-        text += "\n\n*По дням:*"
-        days_dict = {}
-        for date, worker_name, hours in daily:
-            if date not in days_dict:
-                days_dict[date] = []
-            h = float(hours) if '.' in hours else int(hours)
-            days_dict[date].append(f"{worker_name}: {h} ч")
-        for date in sorted(days_dict.keys()):
-            d = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m")
-            text += f"\n📅 *{d}*: " + ", ".join(days_dict[date])
-
+    lines = []
+    for w, h, d in stats:
+        total_hours += h
+        lines.append(f"• {w}: {h} ч ({d} смен)")
+    text = f"📊 *Отчёт*\n\n" + "\n".join(lines) + f"\n\n👥 *Всего: {total_hours} ч*"
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# --- Обработка кнопок ---
+# --- Кнопки ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user = query.from_user
-
     if query.data == "checkin":
-        await query.message.edit_text(
-            "👤 Выбери сотрудника для отметки:",
-            reply_markup=get_workers_keyboard("add"),
-            parse_mode="Markdown"
-        )
+        await query.message.edit_text("👤 Выбери сотрудника:", reply_markup=get_workers_keyboard("add"), parse_mode="Markdown")
     elif query.data == "uncheckin":
         keyboard = get_workers_keyboard("remove")
         if keyboard is None:
@@ -405,51 +327,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text("Выбери сотрудника для удаления:", reply_markup=keyboard)
     elif query.data.startswith("remove_"):
         worker_name = query.data.split("_", 1)[1]
-        existing = get_worker_today(worker_name)
-        if existing:
-            delete_worker_checkin(worker_name)
-            await query.answer(f"❌ {worker_name} удалён.")
-        else:
-            await query.answer(f"⚠️ {worker_name} сегодня не отмечен.")
+        delete_worker_checkin(worker_name)
+        await query.answer(f"❌ {worker_name} удалён.")
         await update_main_message(query)
     elif query.data.startswith("worker_"):
         worker_name = query.data.split("_", 1)[1]
         context.user_data["selected_worker"] = worker_name
         existing = get_worker_today(worker_name)
-        if existing:
-            await query.message.edit_text(
-                f"👤 *{worker_name}*\nСейчас: {existing[0]} ч\nВыбери новые часы:",
-                reply_markup=get_hours_keyboard(),
-                parse_mode="Markdown"
-            )
-        else:
-            await query.message.edit_text(
-                f"👤 *{worker_name}*\nВыбери количество часов:",
-                reply_markup=get_hours_keyboard(),
-                parse_mode="Markdown"
-            )
+        text = f"👤 *{worker_name}*\nСейчас: {existing[0]} ч\nВыбери новые часы:" if existing else f"👤 *{worker_name}*\nВыбери количество часов:"
+        await query.message.edit_text(text, reply_markup=get_hours_keyboard(), parse_mode="Markdown")
     elif query.data.startswith("hours_"):
         hours = query.data.split("_", 1)[1]
         worker_name = context.user_data.get("selected_worker")
         if not worker_name:
-            await query.answer("⚠️ Сначала выбери сотрудника.")
             return
         if hours == "other":
             context.user_data["awaiting_hours"] = True
-            await query.message.edit_text(
-                f"👤 *{worker_name}*\n✏️ Напиши количество часов числом (например, 5 или 7.5):",
-                parse_mode="Markdown"
-            )
+            await query.message.edit_text(f"👤 *{worker_name}*\n✏️ Напиши количество часов:", parse_mode="Markdown")
             return
-        else:
-            add_checkin(user.id, user.username or "", worker_name, hours)
-            await query.answer(f"✅ {worker_name}: {int(hours)} ч")
-            await update_main_message(query)
-            context.user_data.pop("selected_worker", None)
+        add_checkin(user.id, user.username or "", worker_name, hours)
+        await query.answer(f"✅ {worker_name}: {int(hours)} ч")
+        await update_main_message(query)
+        context.user_data.pop("selected_worker", None)
     elif query.data == "back_main":
         await update_main_message(query)
 
-# --- Обработка текста (свои часы) ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text and update.message.text.startswith("/"):
         return
@@ -458,17 +360,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     worker_name = context.user_data.get("selected_worker")
     text = update.message.text.strip().replace(",", ".")
-    if not worker_name:
-        await update.message.reply_text("⚠️ Сначала выбери сотрудника.")
-        context.user_data["awaiting_hours"] = False
-        return
     try:
         hours = float(text)
-        if hours <= 0 or hours > 24:
-            raise ValueError
         hours_str = str(int(hours)) if hours == int(hours) else str(hours)
     except:
-        await update.message.reply_text("❌ Введи число от 0 до 24.")
+        await update.message.reply_text("❌ Введи число.")
         return
     add_checkin(user.id, user.username or "", worker_name, hours_str)
     context.user_data["awaiting_hours"] = False
@@ -492,6 +388,14 @@ def main():
     app.add_handler(CommandHandler("report", report_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Flask для Render (порт)
+    web = Flask(__name__)
+    @web.route('/')
+    def home():
+        return "OK"
+    Thread(target=lambda: web.run(host='0.0.0.0', port=10000)).start()
+
     print("Бот запущен...")
     app.run_polling()
 
